@@ -1,0 +1,11 @@
+# Environment Variables & Secrets
+.env
+
+# Python Compiled Files & Cache
+__pycache__/
+*.py[cod]
+
+# Generated Output Media
+output/
+*.mp4
+*.mp3
