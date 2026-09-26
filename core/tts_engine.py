@@ -1,46 +1,44 @@
+import os
 import asyncio
 import edge_tts
 
+VOICE_MAPPING = {
+    "Adam - Energetic Male (US)": "en-US-GuyNeural",
+    "Bella - Natural Female (US)": "en-US-JennyNeural",
+    "Charlie - Deep Cinematic Male (UK)": "en-GB-RyanNeural",
+    "Sonia - Professional Female (UK)": "en-GB-SoniaNeural",
+    "Liam - Storyteller Male (AU)": "en-AU-WilliamNeural",
+    "Prabhat - Narrative Male (IN)": "en-IN-PrabhatNeural"
+}
 
-async def generate_speech_async(
-    text: str,
-    output_path: str,
-    voice: str = "en-US-ChristopherNeural",
-    rate: str = "+0%",
-    progress_callback=None,
-):
-    """Generates MP3 audio file from input text with real-time chunk progress reporting."""
-    communicate = edge_tts.Communicate(text, voice, rate=rate)
+DEMO_CACHE_DIR = os.path.join("output", "voice_demos")
 
-    # Estimate rough total chunks based on character length for progress tracking
-    total_estimated = max(1, len(text) // 20)
-    current_chunk = 0
+def generate_voiceover(text, voice_choice, output_path):
+    voice = VOICE_MAPPING.get(voice_choice, "en-US-GuyNeural")
+    
+    async def _generate():
+        communicate = edge_tts.Communicate(text, voice)
+        await communicate.save(output_path)
 
-    with open(output_path, "wb") as f:
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
-                current_chunk += 1
-                if progress_callback:
-                    # Calculate progress percentage (clamped between 0.0 and 0.95 until completed)
-                    pct = min(0.95, current_chunk / total_estimated)
-                    progress_callback(pct)
-
-    if progress_callback:
-        progress_callback(1.0)
-
-
-def generate_speech(
-    text: str,
-    output_path: str,
-    voice: str = "en-US-ChristopherNeural",
-    rate: str = "+0%",
-    progress_callback=None,
-):
-    """Synchronous wrapper for Edge TTS generation with progress support."""
-    asyncio.run(
-        generate_speech_async(
-            text, output_path, voice, rate, progress_callback
-        )
-    )
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    asyncio.run(_generate())
     return output_path
+
+def play_voice_demo(voice_choice):
+    voice = VOICE_MAPPING.get(voice_choice, "en-US-GuyNeural")
+    os.makedirs(DEMO_CACHE_DIR, exist_ok=True)
+    
+    demo_file = os.path.abspath(os.path.join(DEMO_CACHE_DIR, f"{voice}_demo.mp3"))
+    demo_text = "Hello! This is a preview of my voice for your video project."
+
+    # Generate sample if not already cached
+    if not os.path.exists(demo_file):
+        async def _gen_demo():
+            comm = edge_tts.Communicate(demo_text, voice)
+            await comm.save(demo_file)
+        
+        asyncio.run(_gen_demo())
+
+    # Native Windows MP3 Audio Playback via PowerShell COM Player
+    ps_command = f'$player = New-Object -ComObject WMPlayer.OCX; $player.URL = "{demo_file}"; $player.controls.play(); Start-Sleep -s 3'
+    os.system(f'powershell -c "{ps_command}"')

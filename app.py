@@ -1,335 +1,452 @@
-import json
 import os
-import re
+import json
 import threading
-from tkinter import filedialog, messagebox
-import customtkinter as ctk
+from dotenv import load_dotenv
 
-from core.ffmpeg_renderer import render_video_ffmpeg
-from core.script_cloner import clone_competitor_script
-from core.tts_engine import generate_speech
-from core.whisper_sync import extract_speech_timestamps
+# Automatically load environment variables from .env file
+load_dotenv()
+
+import customtkinter as ctk
+from tkinter import filedialog, messagebox
 
 ctk.set_appearance_mode("Dark")
 ctk.set_default_color_theme("blue")
 
-
 class StudioFlowApp(ctk.CTk):
-
     def __init__(self):
         super().__init__()
+
         self.title("StudioFlow AI - Multi-Platform Automation Studio")
-        self.geometry("680x660")
+        self.geometry("680x820")
+        self.resizable(True, True)
+        self.minsize(640, 500)
 
-        # Variables
-        self.audio_path = ctk.StringVar()
-        self.images_dir = ctk.StringVar()
-        self.gemini_api_key = ctk.StringVar()
+        self.is_compact = False
+        self.full_height = 820
 
-        # UI Layout
-        self.lbl_header = ctk.CTkLabel(
-            self,
-            text="StudioFlow Automation Engine",
-            font=ctk.CTkFont(size=20, weight="bold"),
+        # Header Title Area
+        self.frame_header = ctk.CTkFrame(self, fg_color="transparent")
+        self.frame_header.pack(fill="x", padx=20, pady=(10, 0))
+
+        self.lbl_title = ctk.CTkLabel(
+            self.frame_header, 
+            text="StudioFlow Automation Engine", 
+            font=ctk.CTkFont(size=20, weight="bold")
         )
-        self.lbl_header.pack(pady=10)
+        self.lbl_title.pack(side="left")
 
-        # Tab Navigation
-        self.tabview = ctk.CTkTabview(self, width=640, height=520)
-        self.tabview.pack(padx=20, pady=5)
+        self.btn_compact = ctk.CTkButton(
+            self.frame_header,
+            text="🗗 Compact Display",
+            width=120,
+            height=28,
+            fg_color="#2B2D31",
+            hover_color="#3B3D41",
+            command=self.toggle_compact_mode
+        )
+        self.btn_compact.pack(side="right")
 
-        self.tab_cloner = self.tabview.add("Competitor Cloner")
-        self.tab_quick = self.tabview.add("Fast Local Sync")
-        self.tab_tts = self.tabview.add("Free TTS Generator")
+        self.lbl_subtitle = ctk.CTkLabel(
+            self, 
+            text="Faceless Content & Video Assembly Studio", 
+            font=ctk.CTkFont(size=12, slant="italic"),
+            text_color="#8A8D93"
+        )
+        self.lbl_subtitle.pack(anchor="w", padx=20, pady=(0, 5))
+
+        # Main Tab Container
+        self.tabview = ctk.CTkTabview(self, width=640, height=660)
+        self.tabview.pack(padx=20, pady=5, fill="both", expand=True)
+
+        self.tabview.add("Competitor Cloner")
+        self.tabview.add("Fast Local Sync")
+        self.tabview.add("Free TTS Generator")
 
         self.setup_cloner_tab()
-        self.setup_quick_sync_tab()
+        self.setup_fast_sync_tab()
         self.setup_tts_tab()
 
-        # Status Bar
+        # Footer Status Bar
         self.lbl_status = ctk.CTkLabel(
-            self, text="Status: Ready", text_color="#00FF00"
+            self, 
+            text="Status: System Ready", 
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#4CAF50"
         )
-        self.lbl_status.pack(pady=5)
+        self.lbl_status.pack(side="bottom", pady=8)
 
-    def set_status(self, text, color="#00FF00"):
-        """Thread-safe status text update."""
-        self.lbl_status.configure(text=f"Status: {text}", text_color=color)
+    def toggle_compact_mode(self):
+        if not self.is_compact:
+            self.geometry("680x220")
+            self.btn_compact.configure(text="🗖 Expand Display")
+            self.is_compact = True
+        else:
+            self.geometry(f"680x{self.full_height}")
+            self.btn_compact.configure(text="🗗 Compact Display")
+            self.is_compact = False
 
+    # ---------------------------------------------------------
+    # TAB 1: COMPETITOR CHANNEL CLONER ENGINE (YouTube API v3)
+    # ---------------------------------------------------------
     def setup_cloner_tab(self):
-        ctk.CTkLabel(
-            self.tab_cloner, text="1. Gemini API Key (Free Tier):"
-        ).pack(anchor="w", padx=15, pady=(10, 2))
-        ctk.CTkEntry(
-            self.tab_cloner,
-            textvariable=self.gemini_api_key,
-            width=500,
-            show="*",
-            placeholder_text="Enter your Gemini API key...",
-        ).pack(padx=15, pady=2)
+        tab = self.tabview.tab("Competitor Cloner")
 
-        ctk.CTkLabel(
-            self.tab_cloner, text="2. Competitor Video Link / ID:"
-        ).pack(anchor="w", padx=15, pady=(10, 2))
-        self.entry_comp_url = ctk.CTkEntry(
-            self.tab_cloner,
-            width=500,
-            placeholder_text="e.g. https://www.youtube.com/watch?v=...",
-        )
-        self.entry_comp_url.pack(padx=15, pady=2)
+        lbl_info = ctk.CTkLabel(tab, text="1. Enter Competitor Channel (@handle or ID):", font=ctk.CTkFont(weight="bold"))
+        lbl_info.pack(anchor="w", padx=15, pady=(10, 2))
 
-        ctk.CTkLabel(self.tab_cloner, text="3. Your New Topic:").pack(
-            anchor="w", padx=15, pady=(10, 2)
-        )
-        self.entry_new_topic = ctk.CTkEntry(
-            self.tab_cloner,
-            width=500,
-            placeholder_text="e.g. 5 Untold Secrets of Ancient Persia",
-        )
-        self.entry_new_topic.pack(padx=15, pady=2)
+        input_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        input_frame.pack(fill="x", padx=15, pady=2)
 
-        self.btn_cloner = ctk.CTkButton(
-            self.tab_cloner,
-            text="Analyze & Clone Script",
-            fg_color="#1F6AA5",
-            font=ctk.CTkFont(weight="bold"),
-            height=35,
-            command=self.start_cloner_thread,
-        )
-        self.btn_cloner.pack(pady=12)
+        self.entry_channel = ctk.CTkEntry(input_frame, width=420, placeholder_text="@MackExplains7 or @TheAncients")
+        self.entry_channel.pack(side="left", padx=(0, 10))
 
-        ctk.CTkLabel(self.tab_cloner, text="Generated Script Output:").pack(
-            anchor="w", padx=15, pady=(2, 2)
+        self.btn_scrape = ctk.CTkButton(
+            input_frame, 
+            text="Analyze Channel", 
+            fg_color="#1f538d",
+            hover_color="#14375e",
+            command=self.start_channel_scraping
         )
-        self.txt_cloned_output = ctk.CTkTextbox(
-            self.tab_cloner, width=580, height=160
-        )
-        self.txt_cloned_output.pack(padx=15, pady=2)
+        self.btn_scrape.pack(side="left")
 
-    def setup_quick_sync_tab(self):
-        ctk.CTkLabel(self.tab_quick, text="1. Select Voiceover File:").pack(
-            anchor="w", padx=15, pady=(10, 2)
-        )
-        ctk.CTkEntry(
-            self.tab_quick, textvariable=self.audio_path, width=420
-        ).pack(side="top", padx=15)
-        ctk.CTkButton(
-            self.tab_quick, text="Browse Audio", command=self.browse_audio
-        ).pack(padx=15, pady=5)
+        lbl_out = ctk.CTkLabel(tab, text="2. Channel Deep Extraction & Blueprint Report:", font=ctk.CTkFont(weight="bold"))
+        lbl_out.pack(anchor="w", padx=15, pady=(10, 2))
 
-        ctk.CTkLabel(self.tab_quick, text="2. Select Image Folder:").pack(
-            anchor="w", padx=15, pady=(10, 2)
-        )
-        ctk.CTkEntry(
-            self.tab_quick, textvariable=self.images_dir, width=420
-        ).pack(side="top", padx=15)
-        ctk.CTkButton(
-            self.tab_quick, text="Browse Folder", command=self.browse_folder
-        ).pack(padx=15, pady=5)
+        self.txt_cloner_report = ctk.CTkTextbox(tab, width=580, height=210)
+        self.txt_cloner_report.pack(padx=15, pady=2, fill="x")
 
-        ctk.CTkLabel(self.tab_quick, text="3. Target Aspect Ratio:").pack(
-            anchor="w", padx=15, pady=(10, 2)
+        lbl_ai = ctk.CTkLabel(tab, text="3. Master Prompt Strategy (Copy for ChatGPT / Claude / DeepSeek):", font=ctk.CTkFont(weight="bold"))
+        lbl_ai.pack(anchor="w", padx=15, pady=(10, 2))
+
+        self.txt_ai_prompt = ctk.CTkTextbox(tab, width=580, height=130)
+        self.txt_ai_prompt.pack(padx=15, pady=2, fill="x")
+
+        btn_copy = ctk.CTkButton(
+            tab, 
+            text="Copy AI Master Prompt to Clipboard", 
+            fg_color="#2B2D31",
+            hover_color="#3B3D41",
+            command=self.copy_prompt_to_clipboard
         )
+        btn_copy.pack(pady=10)
+
+    def start_channel_scraping(self):
+        channel_input = self.entry_channel.get().strip()
+        if not channel_input:
+            messagebox.showwarning("Warning", "Please enter a valid YouTube channel handle or ID.")
+            return
+
+        self.btn_scrape.configure(state="disabled")
+        self.lbl_status.configure(text="Status: Fetching YouTube Data API metrics & transcripts...", text_color="#FF9800")
+
+        thread = threading.Thread(target=self.process_channel_scrape, args=(channel_input,), daemon=True)
+        thread.start()
+
+    def process_channel_scrape(self, channel_input):
+        try:
+            from core.channel_cloner import analyze_and_clone_channel
+            json_path, full_output = analyze_and_clone_channel(channel_input)
+            self.after(0, lambda: self.on_scrape_success(json_path, full_output))
+        except Exception as e:
+            err_msg = str(e)
+            self.after(0, lambda: self.on_scrape_error(err_msg))
+
+    def on_scrape_success(self, json_path, full_output):
+        self.btn_scrape.configure(state="normal")
+        self.lbl_status.configure(text="Status: Channel Blueprint Created!", text_color="#4CAF50")
+
+        meta = full_output.get("channel_metadata", {})
+        summary = full_output.get("summary_analytics", {})
+        videos = full_output.get("videos", [])
+
+        report = (
+            f"=== YOUTUBE DATA API ANALYSIS REPORT ===\n"
+            f"Channel Title: {meta.get('title', 'N/A')}\n"
+            f"Channel ID: {meta.get('id', 'N/A')}\n"
+            f"Subscribers: {meta.get('subscribers', 0):,}\n"
+            f"Total Videos Analyzed: {len(videos)}\n"
+            f"Upload Cadence: Avg {summary.get('upload_cadence', {}).get('avg_days_between_uploads', 'N/A')} days between posts\n"
+            f"Full Analysis JSON: {json_path}\n\n"
+            f"--- TOP OUTLIER VIDEOS ---\n"
+        )
+
+        outliers = [v for v in videos if v.get('is_outlier')]
+        for i, vid in enumerate(outliers[:5], 1):
+            views_val = vid.get('views', 0)
+            velocity = vid.get('metrics', {}).get('view_velocity', 0)
+            report += f"{i}. {vid.get('title')} ({views_val:,} views | {velocity:.1f} v/day)\n   URL: https://youtube.com/watch?v={vid.get('id')}\n"
+
+        self.txt_cloner_report.delete("0.0", "end")
+        self.txt_cloner_report.insert("0.0", report)
+
+        llm_prompt = (
+            f"Act as a Master YouTube Content Strategist.\n"
+            f"I have exported a complete channel analysis JSON blueprint to: '{json_path}'.\n\n"
+            f"Target Channel Summary:\n"
+            f"- Channel Name: {meta.get('title')}\n"
+            f"- Subscribers: {meta.get('subscribers'):,}\n"
+            f"- Total Videos Analyzed: {len(videos)}\n"
+            f"- Title Pattern Info: {summary.get('title_patterns', {})}\n\n"
+            f"INSTRUCTIONS:\n"
+            f"Please analyze the data in the specified JSON file. Deconstruct the hook mechanics, video format lengths, "
+            f"outlier transcript styles, and thumbnail aesthetics. Create a complete Master Prompt Framework to replicate "
+            f"this channel's viral success for a new channel."
+        )
+
+        self.txt_ai_prompt.delete("0.0", "end")
+        self.txt_ai_prompt.insert("0.0", llm_prompt)
+
+        messagebox.showinfo("Analysis Complete", f"Channel JSON Blueprint successfully exported to:\n{json_path}")
+
+    def on_scrape_error(self, err_msg):
+        self.btn_scrape.configure(state="normal")
+        self.lbl_status.configure(text="Status: Channel Extraction Error", text_color="#F44336")
+        messagebox.showerror("Extraction Error", err_msg)
+
+    def copy_prompt_to_clipboard(self):
+        prompt_text = self.txt_ai_prompt.get("0.0", "end").strip()
+        if not prompt_text:
+            messagebox.showwarning("Warning", "No AI prompt generated yet. Scrape a channel first.")
+            return
+
+        self.clipboard_clear()
+        self.clipboard_append(prompt_text)
+        messagebox.showinfo("Copied", "Master Prompt copied to clipboard! Paste it into ChatGPT, Claude, Gemini, or DeepSeek.")
+
+    # ---------------------------------------------------------
+    # TAB 2: FAST LOCAL SYNC
+    # ---------------------------------------------------------
+    def setup_fast_sync_tab(self):
+        tab = self.tabview.tab("Fast Local Sync")
+
+        lbl_vo = ctk.CTkLabel(tab, text="1. Select Voiceover File:", font=ctk.CTkFont(weight="bold"))
+        lbl_vo.pack(anchor="w", padx=15, pady=(8, 2))
+
+        self.entry_vo_path = ctk.CTkEntry(tab, width=580, placeholder_text="Path to .mp3 or .wav file...")
+        self.entry_vo_path.pack(padx=15, pady=2, fill="x")
+
+        btn_browse_vo = ctk.CTkButton(tab, text="Browse Audio", command=self.browse_audio)
+        btn_browse_vo.pack(pady=(2, 6))
+
+        lbl_img = ctk.CTkLabel(tab, text="2. Select Image Folder:", font=ctk.CTkFont(weight="bold"))
+        lbl_img.pack(anchor="w", padx=15, pady=(4, 2))
+
+        self.entry_img_path = ctk.CTkEntry(tab, width=580, placeholder_text="Path to folder with images...")
+        self.entry_img_path.pack(padx=15, pady=2, fill="x")
+
+        btn_browse_img = ctk.CTkButton(tab, text="Browse Folder", command=self.browse_folder)
+        btn_browse_img.pack(pady=(2, 6))
+
+        lbl_seq = ctk.CTkLabel(tab, text="3. Paste Image Sequence / Timestamps (Optional):", font=ctk.CTkFont(weight="bold"))
+        lbl_seq.pack(anchor="w", padx=15, pady=(4, 2))
+
+        self.txt_sequence = ctk.CTkTextbox(tab, width=580, height=130, activate_scrollbars=True)
+        self.txt_sequence.pack(padx=15, pady=2, fill="x")
+        
+        placeholder = (
+            "image 1. 0:00–0:05\n"
+            "image 2. 0:05–0:09\n"
+            "image 3. 0:09–0:19\n"
+            "...\n"
+            "(Leave blank to auto-sync uniformly across voiceover length)"
+        )
+        self.txt_sequence.insert("0.0", placeholder)
+
+        lbl_ratio = ctk.CTkLabel(tab, text="4. Target Aspect Ratio:", font=ctk.CTkFont(weight="bold"))
+        lbl_ratio.pack(anchor="w", padx=15, pady=(6, 2))
+
         self.combo_ratio = ctk.CTkOptionMenu(
-            self.tab_quick,
-            values=[
-                "16:9 (YouTube Long-Form)",
-                "9:16 (TikTok/Reels/Shorts)",
-                "1:1 (Facebook Square)",
-            ],
+            tab, 
+            values=["16:9 (YouTube Long-Form)", "9:16 (TikTok/Reels/Shorts)", "1:1 (Square)"]
         )
-        self.combo_ratio.pack(padx=15, pady=5)
+        self.combo_ratio.pack(anchor="w", padx=15, pady=2)
 
         self.btn_render = ctk.CTkButton(
-            self.tab_quick,
-            text="Render Auto-Synced Video",
-            fg_color="#1F6AA5",
+            tab, 
+            text="Render Auto-Synced Video", 
+            fg_color="#1f538d", 
+            hover_color="#14375e",
             font=ctk.CTkFont(weight="bold"),
-            height=40,
-            command=self.start_quick_sync_thread,
+            command=self.start_render_thread
         )
-        self.btn_render.pack(pady=15)
-
-    def setup_tts_tab(self):
-        ctk.CTkLabel(self.tab_tts, text="Script Text:").pack(
-            anchor="w", padx=15, pady=(10, 2)
-        )
-        self.txt_script = ctk.CTkTextbox(self.tab_tts, width=500, height=180)
-        self.txt_script.pack(padx=15, pady=5)
-
-        # Progress Bar Widget
-        self.progress_tts = ctk.CTkProgressBar(self.tab_tts, width=500)
-        self.progress_tts.pack(padx=15, pady=(10, 5))
-        self.progress_tts.set(0)
-
-        self.btn_tts = ctk.CTkButton(
-            self.tab_tts,
-            text="Generate Voiceover MP3",
-            command=self.start_tts_thread,
-        )
-        self.btn_tts.pack(pady=15)
+        self.btn_render.pack(pady=(12, 6))
 
     def browse_audio(self):
         file_path = filedialog.askopenfilename(
-            filetypes=[("Audio Files", "*.mp3 *.wav")]
+            title="Select Voiceover Audio",
+            filetypes=[("Audio Files", "*.mp3 *.wav *.aac *.m4a")]
         )
         if file_path:
-            self.audio_path.set(file_path)
+            self.entry_vo_path.delete(0, "end")
+            self.entry_vo_path.insert(0, file_path)
 
     def browse_folder(self):
-        dir_path = filedialog.askdirectory()
-        if dir_path:
-            self.images_dir.set(dir_path)
+        folder_path = filedialog.askdirectory(title="Select Image Folder")
+        if folder_path:
+            self.entry_img_path.delete(0, "end")
+            self.entry_img_path.insert(0, folder_path)
 
-    # --- Thread Controllers ---
+    def start_render_thread(self):
+        vo_path = self.entry_vo_path.get().strip()
+        img_folder = self.entry_img_path.get().strip()
+        raw_sequence = self.txt_sequence.get("0.0", "end").strip()
 
-    def start_quick_sync_thread(self):
-        threading.Thread(
-            target=self.run_quick_sync, daemon=True
-        ).start()
+        if not os.path.exists(vo_path):
+            messagebox.showerror("Error", "Please select a valid Voiceover Audio file.")
+            return
 
-    def start_cloner_thread(self):
-        threading.Thread(
-            target=self.run_script_cloner, daemon=True
-        ).start()
+        if not os.path.exists(img_folder):
+            messagebox.showerror("Error", "Please select a valid Image Folder.")
+            return
+
+        self.btn_render.configure(state="disabled")
+        self.lbl_status.configure(text="Status: Rendering video in background... Please wait.", text_color="#FF9800")
+
+        thread = threading.Thread(target=self.process_render, args=(vo_path, img_folder, raw_sequence), daemon=True)
+        thread.start()
+
+    def process_render(self, vo_path, img_folder, raw_sequence):
+        try:
+            downloads_folder = os.path.join(os.path.expanduser("~"), "Downloads")
+            output_file = os.path.join(downloads_folder, "final_synced_video.mp4")
+
+            if raw_sequence and "0:00" in raw_sequence:
+                from core.ffmpeg_renderer import render_from_custom_sequence
+                render_from_custom_sequence(vo_path, img_folder, raw_sequence, output_file)
+            else:
+                from core.ffmpeg_renderer import render_auto_sync
+                render_auto_sync(vo_path, img_folder, output_file)
+
+            self.after(0, lambda: self.on_render_success(output_file))
+        except Exception as e:
+            err_msg = str(e)
+            self.after(0, lambda: self.on_render_error(err_msg))
+
+    def on_render_success(self, output_file):
+        self.lbl_status.configure(text="Status: Render Complete! Saved to Downloads.", text_color="#4CAF50")
+        self.btn_render.configure(state="normal")
+        os.system(f'explorer /select,"{output_file}"')
+        messagebox.showinfo("Success", f"Video successfully saved to Downloads:\n{output_file}")
+
+    def on_render_error(self, err_msg):
+        self.lbl_status.configure(text="Status: Render Error", text_color="#F44336")
+        self.btn_render.configure(state="normal")
+        messagebox.showerror("Render Error", err_msg)
+
+    # ---------------------------------------------------------
+    # TAB 3: FREE TTS GENERATOR WITH VOICE DEMO PLAYER
+    # ---------------------------------------------------------
+    def setup_tts_tab(self):
+        tab = self.tabview.tab("Free TTS Generator")
+
+        lbl_script = ctk.CTkLabel(tab, text="1. Enter Voiceover Script:", font=ctk.CTkFont(weight="bold"))
+        lbl_script.pack(anchor="w", padx=15, pady=(10, 2))
+
+        self.txt_tts_script = ctk.CTkTextbox(tab, width=580, height=170)
+        self.txt_tts_script.pack(padx=15, pady=2, fill="x")
+
+        lbl_voice = ctk.CTkLabel(tab, text="2. Select AI Voice Profile & Preview:", font=ctk.CTkFont(weight="bold"))
+        lbl_voice.pack(anchor="w", padx=15, pady=(8, 2))
+
+        voice_frame = ctk.CTkFrame(tab, fg_color="transparent")
+        voice_frame.pack(anchor="w", padx=15, pady=2, fill="x")
+
+        self.combo_voice = ctk.CTkOptionMenu(
+            voice_frame, 
+            width=360,
+            values=[
+                "Adam - Energetic Male (US)",
+                "Bella - Natural Female (US)",
+                "Charlie - Deep Cinematic Male (UK)",
+                "Sonia - Professional Female (UK)",
+                "Liam - Storyteller Male (AU)",
+                "Prabhat - Narrative Male (IN)"
+            ]
+        )
+        self.combo_voice.pack(side="left", padx=(0, 10))
+
+        btn_demo = ctk.CTkButton(
+            voice_frame,
+            text="▶ Play Demo",
+            width=110,
+            fg_color="#2B2D31",
+            hover_color="#3B3D41",
+            command=self.play_demo_audio
+        )
+        btn_demo.pack(side="left")
+
+        self.progress_tts = ctk.CTkProgressBar(tab, width=580, mode="indeterminate")
+        self.progress_tts.pack(padx=15, pady=(15, 5), fill="x")
+        self.progress_tts.set(0)
+
+        self.btn_generate_tts = ctk.CTkButton(
+            tab, 
+            text="Generate Full AI Voiceover (.mp3)", 
+            fg_color="#1f538d",
+            hover_color="#14375e",
+            font=ctk.CTkFont(weight="bold"),
+            command=self.start_tts_thread
+        )
+        self.btn_generate_tts.pack(pady=10)
+
+    def play_demo_audio(self):
+        voice_choice = self.combo_voice.get()
+        self.lbl_status.configure(text=f"Status: Playing demo for {voice_choice}...", text_color="#2196F3")
+        
+        def _thread_demo():
+            from core.tts_engine import play_voice_demo
+            play_voice_demo(voice_choice)
+            self.after(0, lambda: self.lbl_status.configure(text="Status: System Ready", text_color="#4CAF50"))
+
+        threading.Thread(target=_thread_demo, daemon=True).start()
 
     def start_tts_thread(self):
-        threading.Thread(
-            target=self.run_tts_generation, daemon=True
-        ).start()
-
-    # --- Processing Logic ---
-
-    def run_quick_sync(self):
-        audio = self.audio_path.get()
-        folder = self.images_dir.get()
-
-        if not audio or not folder:
-            messagebox.showwarning(
-                "Input Error", "Please select both audio and image inputs."
-            )
+        text = self.txt_tts_script.get("0.0", "end").strip()
+        if not text:
+            messagebox.showwarning("Warning", "Please enter text to generate speech.")
             return
 
-        files = os.listdir(folder)
-        image_map = {}
-        for fname in files:
-            match = re.match(r"^(\d+)_\d+\.(jpeg|jpg|png|JPEG|JPG|PNG)$", fname)
-            if match:
-                image_map[int(match.group(1))] = os.path.join(folder, fname)
+        self.btn_generate_tts.configure(state="disabled")
+        self.progress_tts.start()
+        self.lbl_status.configure(text="Status: Generating AI Voiceover in background...", text_color="#FF9800")
 
-        sorted_keys = sorted(image_map.keys())
-        image_paths = [image_map[k] for k in sorted_keys]
+        thread = threading.Thread(target=self.process_tts, args=(text,), daemon=True)
+        thread.start()
 
-        if not image_paths:
-            messagebox.showerror(
-                "Error",
-                "No matching image files found (e.g. 1_..., 2_...) in folder.",
-            )
-            return
+    def process_tts(self, text):
+        try:
+            from core.tts_engine import generate_voiceover
 
-        ratio_raw = self.combo_ratio.get()
-        ratio = (
-            "9:16"
-            if "9:16" in ratio_raw
-            else "1:1" if "1:1" in ratio_raw else "16:9"
+            voice_choice = self.combo_voice.get()
+            output_path = os.path.abspath(os.path.join("output", "generated_voiceover.mp3"))
+
+            generate_voiceover(text, voice_choice, output_path)
+
+            self.after(0, lambda: self.on_tts_success(output_path))
+        except Exception as e:
+            err_msg = str(e)
+            self.after(0, lambda: self.on_tts_error(err_msg))
+
+    def on_tts_success(self, output_path):
+        self.progress_tts.stop()
+        self.progress_tts.set(1)
+        self.lbl_status.configure(text="Status: Voiceover Generated!", text_color="#4CAF50")
+        self.btn_generate_tts.configure(state="normal")
+
+        self.entry_vo_path.delete(0, "end")
+        self.entry_vo_path.insert(0, output_path)
+
+        messagebox.showinfo(
+            "TTS Complete", 
+            f"Voiceover successfully generated!\nSaved to: {output_path}\n\nPath automatically set in 'Fast Local Sync' tab."
         )
 
-        try:
-            self.btn_render.configure(state="disabled")
-            self.set_status("Extracting timestamps with Whisper AI...", "#FFFF00")
-            self.update_idletasks()
-
-            durations = extract_speech_timestamps(audio, len(image_paths))
-
-            self.set_status("Rendering video with FFmpeg...", "#FFFF00")
-            self.update_idletasks()
-
-            output_file = os.path.join("output", "final_synced_video.mp4")
-            os.makedirs("output", exist_ok=True)
-
-            render_video_ffmpeg(
-                image_paths, durations, audio, output_file, aspect_ratio=ratio
-            )
-
-            self.set_status("Render Complete!", "#00FF00")
-            messagebox.showinfo(
-                "Success",
-                f"Video rendering completed successfully!\nSaved to: {output_file}",
-            )
-        except Exception as e:
-            self.set_status("Render Failed", "#FF0000")
-            messagebox.showerror("Execution Error", str(e))
-        finally:
-            self.btn_render.configure(state="normal")
-            self.update_idletasks()
-
-    def run_script_cloner(self):
-        api_key = self.gemini_api_key.get().strip()
-        comp_url = self.entry_comp_url.get().strip()
-        new_topic = self.entry_new_topic.get().strip()
-
-        if not api_key or not comp_url or not new_topic:
-            messagebox.showwarning(
-                "Input Error",
-                "Please fill in Gemini API Key, Competitor URL, and New Topic.",
-            )
-            return
-
-        try:
-            self.btn_cloner.configure(state="disabled")
-            self.set_status("Cloning competitor script via Gemini...", "#FFFF00")
-
-            result = clone_competitor_script(comp_url, new_topic, api_key)
-
-            self.txt_cloned_output.delete("1.0", "end")
-            self.txt_cloned_output.insert(
-                "1.0", json.dumps(result, indent=2)
-            )
-            self.set_status("Script Cloned Successfully!", "#00FF00")
-            messagebox.showinfo(
-                "Success", "Competitor script cloned successfully!"
-            )
-        except Exception as e:
-            self.set_status("Cloning Failed", "#FF0000")
-            messagebox.showerror("Execution Error", str(e))
-        finally:
-            self.btn_cloner.configure(state="normal")
-
-    def update_tts_progress(self, value):
-        """Thread-safe UI update for TTS progress bar."""
-        self.progress_tts.set(value)
-        self.update_idletasks()
-
-    def run_tts_generation(self):
-        text = self.txt_script.get("1.0", "end").strip()
-        if not text:
-            messagebox.showwarning("Warning", "Please enter script text.")
-            return
-
-        try:
-            self.btn_tts.configure(state="disabled")
-            self.progress_tts.set(0)
-            self.set_status("Generating neural voiceover...", "#FFFF00")
-
-            os.makedirs("output", exist_ok=True)
-            out_path = os.path.join("output", "generated_voiceover.mp3")
-
-            generate_speech(
-                text, out_path, progress_callback=self.update_tts_progress
-            )
-
-            self.progress_tts.set(1.0)
-            self.set_status("Voiceover Ready!", "#00FF00")
-            messagebox.showinfo(
-                "Success",
-                f"Voiceover generated successfully!\nSaved to: {out_path}",
-            )
-        except Exception as e:
-            self.set_status("TTS Failed", "#FF0000")
-            messagebox.showerror("Execution Error", str(e))
-        finally:
-            self.btn_tts.configure(state="normal")
-
+    def on_tts_error(self, err_msg):
+        self.progress_tts.stop()
+        self.progress_tts.set(0)
+        self.lbl_status.configure(text="Status: TTS Generation Error", text_color="#F44336")
+        self.btn_generate_tts.configure(state="normal")
+        messagebox.showerror("TTS Error", err_msg)
 
 if __name__ == "__main__":
     app = StudioFlowApp()

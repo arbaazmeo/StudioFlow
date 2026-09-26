@@ -9,3 +9,24 @@ __pycache__/
 output/
 *.mp4
 *.mp3
+# Environment & Sensitive Keys
+.env
+
+# Virtual Environment
+venv/
+AutoCutStudioPro/
+
+# Python Cache & Compiled Files
+__pycache__/
+*.py[cod]
+
+# Local Output & Assets
+output/
+thumbnails/
+voice_demos/
+*.mp4
+*.mp3
+
+# IDE / Editor Folders
+.vscode/
+.idea/

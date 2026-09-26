@@ -1,93 +1,139 @@
 import os
-import shutil
-import subprocess
+import re
+from moviepy.audio.io.AudioFileClip import AudioFileClip
+from moviepy.video.VideoClip import ImageClip
+from moviepy.video.compositing.concatenate import concatenate_videoclips
 
+def parse_custom_sequence(raw_sequence_text):
+    parsed = []
+    # Flexible regex matching standard hyphens, en-dashes, em-dashes, and varying whitespace
+    pattern = re.compile(
+        r"(?:image\s*)?(\d+)[\.\:]?\s*(\d+):(\d+)\s*[\-\–\—\to]+\s*(\d+):(\d+)", 
+        re.IGNORECASE
+    )
+    
+    for line in raw_sequence_text.splitlines():
+        # Skip guide placeholder text
+        if "leave blank" in line.lower() or "..." in line or not line.strip():
+            continue
+            
+        matches = pattern.findall(line)
+        for match in matches:
+            img_num = int(match[0])
+            start_sec = int(match[1]) * 60 + int(match[2])
+            end_sec = int(match[3]) * 60 + int(match[4])
+            duration = end_sec - start_sec
+            
+            if duration > 0:
+                parsed.append((img_num, start_sec, duration))
+            
+    return parsed
 
-def get_ffmpeg_cmd():
-    """Finds the ffmpeg executable on the system."""
-    # Check if ffmpeg is in system PATH
-    ffmpeg_bin = shutil.which("ffmpeg")
-    if ffmpeg_bin:
-        return ffmpeg_bin
+def render_from_custom_sequence(audio_path, image_folder, raw_sequence_text, output_file):
+    mapping = parse_custom_sequence(raw_sequence_text)
+    if not mapping:
+        raise ValueError("Could not parse sequence timestamps. Check format.")
 
-    # Common winget / manual installation paths on Windows
-    possible_paths = [
-        os.path.expanduser(
-            r"~\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-7.0.2-full_build\bin\ffmpeg.exe"
-        ),
-        r"C:\ffmpeg\bin\ffmpeg.exe",
-        r"C:\Program Files\ffmpeg\bin\ffmpeg.exe",
-    ]
+    # 1. Fetch and numerically sort ALL image files in folder
+    valid_exts = (".png", ".jpg", ".jpeg", ".webp")
+    all_files = [f for f in os.listdir(image_folder) if f.lower().endswith(valid_exts)]
+    
+    def natural_sort_key(s):
+        return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
+    
+    all_files.sort(key=natural_sort_key)
 
-    for path in possible_paths:
-        if os.path.exists(path):
-            return path
+    if not all_files:
+        raise FileNotFoundError(f"No image files found inside {image_folder}")
 
-    # If still not found, return 'ffmpeg' and let subprocessing raise clear error
-    return "ffmpeg"
+    # Load audio track
+    audio_clip = AudioFileClip(audio_path)
+    video_clips = []
 
+    # 2. Match timestamp entry to sorted images
+    for idx, (img_num, start_sec, duration) in enumerate(mapping):
+        found_path = None
 
-def render_video_ffmpeg(
-    image_paths: list,
-    durations: list,
-    audio_path: str,
-    output_path: str,
-    aspect_ratio: str = "16:9",
-):
-    """Stitches images and audio into an MP4 video using fast local FFmpeg rendering."""
-    concat_file = "concat_manifest.txt"
-    ffmpeg_bin = get_ffmpeg_cmd()
+        if idx < len(all_files):
+            found_path = os.path.join(image_folder, all_files[idx])
+        else:
+            possible_names = [
+                f"image_{img_num}.png", f"image_{img_num}.jpg",
+                f"image {img_num}.png", f"image {img_num}.jpg",
+                f"{img_num}.png", f"{img_num}.jpg"
+            ]
+            for name in possible_names:
+                full_path = os.path.join(image_folder, name)
+                if os.path.exists(full_path):
+                    found_path = full_path
+                    break
 
-    # Write FFmpeg concatenation file
-    with open(concat_file, "w", encoding="utf-8") as f:
-        for idx, img in enumerate(image_paths):
-            clean_path = os.path.abspath(img).replace("\\", "/")
-            f.write(f"file '{clean_path}'\n")
-            f.write(f"duration {durations[idx]:.3f}\n")
-        # Duplicate last frame for FFmpeg specification
-        clean_last = os.path.abspath(image_paths[-1]).replace("\\", "/")
-        f.write(f"file '{clean_last}'\n")
+        if found_path and os.path.exists(found_path):
+            clip = ImageClip(found_path).set_duration(duration)
+            video_clips.append(clip)
 
-    # Set crop and aspect filters
-    if aspect_ratio == "9:16":
-        video_filter = (
-            "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
-        )
-    elif aspect_ratio == "1:1":
-        video_filter = (
-            "scale=1080:1080:force_original_aspect_ratio=increase,crop=1080:1080"
-        )
-    else:  # Default 16:9
-        video_filter = (
-            "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080"
-        )
+    if not video_clips:
+        raise FileNotFoundError("No matching images could be loaded from the selected folder.")
 
-    ffmpeg_command = [
-        ffmpeg_bin,
-        "-y",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        concat_file,
-        "-i",
-        audio_path,
-        "-vf",
-        video_filter,
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-shortest",
-        output_path,
-    ]
+    print(f"Assembling {len(video_clips)} image clips with audio track...")
+    
+    # Build visual sequence and force audio attachment
+    final_video = concatenate_videoclips(video_clips, method="compose")
+    final_video.audio = audio_clip
+    
+    if final_video.duration > audio_clip.duration:
+        final_video = final_video.subclip(0, audio_clip.duration)
 
-    subprocess.run(ffmpeg_command, check=True)
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    # Export with strict audio parameters
+    final_video.write_videofile(
+        output_file,
+        fps=24,
+        codec="libx264",
+        audio=True,
+        audio_codec="aac",
+        audio_bitrate="192k",
+        audio_fps=44100,
+        temp_audiofile="temp_audio.m4a",
+        remove_temp=True
+    )
+    
+    audio_clip.close()
+    final_video.close()
 
-    if os.path.exists(concat_file):
-        os.remove(concat_file)
+def render_auto_sync(audio_path, image_folder, output_file):
+    audio_clip = AudioFileClip(audio_path)
+    total_duration = audio_clip.duration
+    
+    valid_exts = (".png", ".jpg", ".jpeg", ".webp")
+    image_files = sorted([
+        os.path.join(image_folder, f) for f in os.listdir(image_folder)
+        if f.lower().endswith(valid_exts)
+    ])
 
-    return output_path
+    if not image_files:
+        raise FileNotFoundError("No valid image files found in folder.")
+
+    per_image_duration = total_duration / len(image_files)
+    video_clips = [ImageClip(img).set_duration(per_image_duration) for img in image_files]
+
+    final_video = concatenate_videoclips(video_clips, method="compose")
+    final_video.audio = audio_clip
+    
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    
+    final_video.write_videofile(
+        output_file, 
+        fps=24, 
+        codec="libx264", 
+        audio=True, 
+        audio_codec="aac",
+        audio_bitrate="192k",
+        audio_fps=44100,
+        temp_audiofile="temp_audio.m4a",
+        remove_temp=True
+    )
+    
+    audio_clip.close()
+    final_video.close()
