@@ -1,0 +1,21 @@
+# Secrets & Environment Variables
+.env
+
+# Virtual Environments
+venv/
+AutoCutStudioPro/
+
+# Python Cache & Build Files
+__pycache__/
+*.py[cod]
+
+# Local Output Media & Assets
+output/
+thumbnails/
+voice_demos/
+*.mp4
+*.mp3
+
+# IDE / Editor Settings
+.vscode/
+.idea/
